@@ -1,0 +1,3 @@
+[submodule "graph-measures"]
+	path = graph-measures
+	url = https://github.com/ovednagar/graph-measures.git
