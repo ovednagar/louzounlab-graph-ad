@@ -1,4 +1,5 @@
 from sklearn import linear_model
+from tqdm import tqdm
 from loggers import BaseLogger, PrintLogger
 import numpy as np
 from multi_graph import MultiGraph
@@ -16,11 +17,8 @@ class BetaCalculator:
         self._build()
 
     def _build(self):
-        graph_index = 0
-        for g_id in self._graphs.graph_names():
-            self._logger.debug("calculating beta vec for:\t" + g_id)
+        for graph_index, g_id in enumerate(self._graphs.graph_names()):
             self._beta_matrix[graph_index, :] = self._calc_beta(g_id)
-            graph_index += 1
 
     def _calc_beta(self, gid):
         raise NotImplementedError()
@@ -43,7 +41,8 @@ class LinearContext(BetaCalculator):
         self._interval = int(graphs.number_of_graphs()) if window_size is None else window_size
         self._all_features = []
         self._dict_mx = dict_mx
-        for graph in graphs.graph_names():
+
+        for graph in tqdm(graphs.graph_names()):
             m = self._dict_mx[graph]
             # self._nodes_for_graph.append(m.shape[0])
             # append graph features
@@ -56,6 +55,8 @@ class LinearContext(BetaCalculator):
         # all_ftr_graph_index - [ .... last_row_index_for_graph_i ... ]
         self._all_ftr_graph_index = np.cumsum([0] + graphs.node_count()).tolist()
         super(LinearContext, self).__init__(graphs, feature_pairs)
+        self._logger.debug("finish initiating beta vectors")
+
 
     def _calc_beta(self, gid):
         beta_vec = []
@@ -91,7 +92,7 @@ class LinearMeanContext(BetaCalculator):
         # all_ftr_graph_index - [ .... last_row_index_for_graph_i ... ]
         self._ref_coefficients = {}
 
-        for i, j, r in feature_pairs:
+        for i, j, r in tqdm(feature_pairs):
             self._ref_coefficients[(i, j)] = {}
             # calculate mean coefficient and beta from correlations over all context graphs
             for context_gnx_name in self._ordered_keys:
@@ -102,6 +103,7 @@ class LinearMeanContext(BetaCalculator):
                 self._ref_coefficients[(i, j)][context_gnx_name] = coeff_context
 
         super(LinearMeanContext, self).__init__(graphs, feature_pairs)
+        self._logger.debug("finish initiating beta vectors")
 
     def _filter_ftr_vec(self, mx, i, j, min_val=1e-9):
         min_val = np.log(min_val)
@@ -144,57 +146,4 @@ class LinearMeanContext(BetaCalculator):
 
             beta_vec.append(np.mean(g_matrix[:, j] - coeff_context * g_matrix[:, i]))
 
-        return np.asarray(beta_vec)
-
-
-class LinearRegBetaCalculator(BetaCalculator):
-    def __init__(self, graphs: MultiGraph, feature_pairs, single_c=True):
-        self.single_c = single_c
-        self.single_c_calculated = False
-        self.single_c_regression = {}
-        super(LinearRegBetaCalculator, self).__init__(graphs, feature_pairs)
-
-    def _calc_single(self, feature_i, feature_j):
-        # if we calculate a single c over all the graphs
-        f_key = str(feature_i) + "," + str(feature_j)
-        if f_key not in self.single_c_regression:
-            self._ftr_matrix = self._graphs.features_matrix_by_name(for_all=True)
-            self.single_c_regression[f_key] = self._linear_regression(self._ftr_matrix[:, feature_i].T,
-                                                                  self._ftr_matrix[:, feature_j].T)
-        return self.single_c_regression[f_key]
-
-    def _calc_multi(self, feature_vec_i, feature_vec_j):
-        # here we calculate c for each graph separately
-        return self._linear_regression(feature_vec_i, feature_vec_j)
-
-    def _linear_regression(self, x_np, y_np):
-        """
-        :param x_np: numpy array for one feature
-        :param y_np:
-        :return: regression coefficient
-        """
-        x = x_np.tolist()
-        y = y_np.tolist()
-        regression = linear_model.LinearRegression()
-        regression.fit(np.transpose(np.matrix(x)), np.transpose(np.matrix(y)))
-        return regression.coef_[0][0]
-
-    def _calc_beta(self, gid):
-        beta_vec = []
-        for i, j in self._ftr_pairs:
-            ftr_matrix = self._graphs.features_matrix(gid)
-            feature_i = ftr_matrix[:, i].T
-            feature_j = ftr_matrix[:, j].T
-
-            # if we calculate a single c over all the graphs
-            if self.single_c:
-                coef_ij = self._calc_single(i, j)
-            else:
-                coef_ij = self._calc_multi(feature_i, feature_j)
-
-            # calculate b_ijk which is defined as the mean on the b for all the vertices of a graph
-            # b_ijk_vec is a vector of b_ijk for all the vertices in the graph
-            b_ijk_vec = feature_j - coef_ij * feature_i
-            b_ijk = np.mean(b_ijk_vec)
-            beta_vec.append(b_ijk)
         return np.asarray(beta_vec)

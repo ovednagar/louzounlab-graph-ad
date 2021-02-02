@@ -1,13 +1,7 @@
-from time import strftime, gmtime
 from scipy import spatial
 import numpy as np
-import seaborn as sns
-import os
-import matplotlib.pyplot as plt
-from os import path
 from sklearn.mixture import GaussianMixture
 from sklearn.neighbors import LocalOutlierFactor
-from scipy.spatial.distance import cosine, jaccard, directed_hausdorff, correlation
 
 
 class GraphScore:
@@ -60,17 +54,6 @@ class KnnScore(GraphScore):
             # for col in range(len(sorted_row)):
                 neighbor_sum += sorted_row[col]
             self._scores[graph_k] = neighbor_sum
-
-    def dist_heat_map(self, file_name="graph_dist"):
-        plt_path = path.join("gif", self._database_name, file_name + "_" + strftime("%d:%m:%y_%H:%M:%S", gmtime()) + ".jpg")
-        if "gif" not in os.listdir("."):
-            os.mkdir("gif")
-        if self._database_name not in os.listdir(path.join("gif")):
-            os.mkdir(path.join("gif", self._database_name))
-        ax = sns.heatmap(self._dMat, xticklabels=40, yticklabels=40, vmin=0, vmax=1)
-        plt.title("Graphs Distance")
-        plt.savefig(plt_path)
-        plt.close()
 
 
 class GmmScore(GraphScore):

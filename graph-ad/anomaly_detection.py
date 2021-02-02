@@ -1,207 +1,149 @@
 import os
 import pickle
-from anomaly_picker import SimpleAnomalyPicker
-from beta_calculator import LinearContext, LinearMeanContext
-from features_picker import PearsonFeaturePicker
-from graph_score import KnnScore, GmmScore, LocalOutlierFactorScore
-from features_processor import FeaturesProcessor, log_norm
-from graph_features import GraphFeatures
-from loggers import PrintLogger
-from parameters import AdParams
-from temporal_graph import TemporalGraph
+import re
 import numpy as np
-# np.seterr(all='raise')
+from features_infra.graph_features import GraphFeatures
+from features_meta_ad import ANOMALY_DETECTION_FEATURES
+from features_processor import FeaturesProcessor, log_norm
+from loggers import PrintLogger
+from temporal_graph import TemporalGraph
+from tools.anomaly_picker import SimpleAnomalyPicker
+from tools.beta_calculator import LinearContext, LinearMeanContext
+from tools.features_picker import PearsonFeaturePicker
+from tools.graph_score import KnnScore, GmmScore, LocalOutlierFactorScore
+import json
+import pandas as pd
 
 
-class AnomalyDetection:
-    def __init__(self, params: AdParams):
-        self._base_dir = __file__.replace("/", os.sep)
-        self._base_dir = os.path.join(self._base_dir.rsplit(os.sep, 1)[0])
-        self._data_path = os.path.join(self._base_dir, "INPUT_DATA", params.database.DATABASE_FILE)
-        self._params = params
-        self._data_name = params.database.DATABASE_NAME
-        self._logger = PrintLogger("Anomaly logger")
+class TPGAD:
+    def __init__(self, params):
+        self._params = params if type(params) is dict else json.load(open(params, "rt"))
+        self._logger = PrintLogger("graph-ad")
         self._temporal_graph = self._build_temporal_graph()
-        self._ground_truth = self._load_ground_truth(self._params.database.GROUND_TRUTH)
-        # self._temporal_graph.filter(
-        #         lambda x: False if self._temporal_graph.node_count(x) < 20 else True,
-        #         func_input="graph_name")
-        self._idx_to_name = list(self._temporal_graph.graph_names())
-        self._name_to_idx = {name: idx for idx, name in enumerate(self._idx_to_name)}
+        self._ground_truth = self._load_ground_truth(self._params['gt']['filename'])
+        self._num_anomalies = len(self._ground_truth)*2
+        self._idx_to_graph = list(self._temporal_graph.graph_names())
+        self._graph_to_idx = {name: idx for idx, name in enumerate(self._idx_to_graph)}
+        self._run_ad()
 
-        if self._params.vec_type == "motif_ratio":
-            self._build_second_method()
-        elif self._params.vec_type == "regression":
-            self._build_first_method()
-        elif self._params.vec_type == "mean_regression":
-            self._build_third_method()
+    def _load_ground_truth(self, gt_file):
+        df = pd.read_csv(gt_file)
+        return {self._temporal_graph.name_to_index(row.anomaly): row.get("score", 1) for i, row in df.iterrows()}
 
-    def _load_ground_truth(self, gd):
-        if type(gd) is list:
-            return {self._temporal_graph.name_to_index(g_id): 1 for g_id in gd}
-        elif type(gd) is dict:
-            return {self._temporal_graph.name_to_index(g_id): float(val) for g_id, val in gd.items()}
-        return None
+    def data_name(self):
+        max_connected = "max_connected_" if self._params['features']['max_connected'] else ""
+        directed = "directed" if self._params['dataset']['directed'] else "undirected"
+        weighted = "weighted_" if self._params['dataset']['weight_col'] is not None else ""
+        return f"{self._params['dataset']['name']}_{weighted}{max_connected}{directed}"
 
     def _build_temporal_graph(self):
-        database_name = self._params.database.DATABASE_NAME + "_" + str(self._params.max_connected)\
-                        + "_" + str(self._params.directed)
-        vec_pkl_path = os.path.join(self._base_dir, "pkl", "temporal_graphs", database_name + "_tg.pkl")
-        if os.path.exists(vec_pkl_path):
-            self._logger.info("loading pkl file - temoral_graphs")
-            tg = pickle.load(open(vec_pkl_path, "rb"))
+        tg_pkl_dir = os.path.join(self._params['general']['pkl_path'], "temporal_graphs")
+        tg_pkl_path = os.path.join(tg_pkl_dir, f"{self.data_name()}_tg.pkl")
+        if os.path.exists(tg_pkl_path):
+            self._logger.info("loading pkl file - temporal_graphs")
+            tg = pickle.load(open(tg_pkl_path, "rb"))
         else:
-            tg = TemporalGraph(database_name, self._data_path, self._params.database.DATE_FORMAT,
-                               self._params.database.TIME_COL, self._params.database.SRC_COL,
-                               self._params.database.DST_COL, weight_col=self._params.database.WEIGHT_COL,
-                               weeks=self._params.database.WEEK_SPLIT, days=self._params.database.DAY_SPLIT,
-                               hours=self._params.database.HOUR_SPLIT, minutes=self._params.database.MIN_SPLIT,
-                               seconds=self._params.database.SEC_SPLIT, directed=self._params.directed,
+            tg = TemporalGraph(self.data_name(), self._params['dataset']['filename'], self._params['dataset']['time_format'],
+                               self._params['dataset']['time_col'], self._params['dataset']['src_col'],
+                               self._params['dataset']['dst_col'],
+                               weight_col=self._params['dataset'].get('weight_col', None),
+                               weeks=self._params['dataset'].get('week_split', None),
+                               days=self._params['dataset'].get('day_split', None),
+                               hours=self._params['dataset'].get('hour_split', None),
+                               minutes=self._params['dataset'].get('min_split', None),
+                               seconds=self._params['dataset'].get('sec_split', None),
+                               directed=self._params['dataset']['directed'],
                                logger=self._logger).to_multi_graph()
+
             tg.suspend_logger()
-            pickle.dump(tg, open(vec_pkl_path, "wb"))
-        tg.wake_logger()
+            if self._params['general']["dump_pkl"]:
+                os.makedirs(tg_pkl_dir, exist_ok=True)
+                pickle.dump(tg, open(tg_pkl_path, "wb"))
+            tg.wake_logger()
         return tg
 
-    def _calc_matrix(self):
-        database_name = self._params.database.DATABASE_NAME + "_" + str(self._params.max_connected) + "_" + str(
-            self._params.directed)
-        mat_pkl_path = os.path.join(self._base_dir, "pkl", "vectors", database_name + "_matrix_log" +
-                                    str(self._params.log) + ".pkl")
-        if os.path.exists(mat_pkl_path):
+    def _calc_tg_feature_matrix(self):
+        log_ext = "log_" if self._params['features']['log'] else ""
+        feature_matrix_dir = os.path.join(self._params['general']['pkl_path'], "gt_feature_matrix")
+        mat_pkl = os.path.join(feature_matrix_dir, f"{self.data_name()}_{log_ext}tg_feature_matrices.pkl")
+
+        if os.path.exists(mat_pkl):
             self._logger.info("loading pkl file - graph_matrix")
-            return pickle.load(open(mat_pkl_path, "rb"))
+            return pickle.load(open(mat_pkl, "rb"))
 
         gnx_to_vec = {}
         # create dir for database
-        pkl_dir = os.path.join(self._base_dir, "pkl", "features")
-        database_pkl_dir = os.path.join(pkl_dir, database_name)
-        if database_name not in os.listdir(pkl_dir):
-            os.mkdir(database_pkl_dir)
-
+        database_pkl_dir = os.path.join(self._params['general']['pkl_path'], "features", self.data_name())
         for gnx_name, gnx in zip(self._temporal_graph.graph_names(), self._temporal_graph.graphs()):
             # create dir for specific graph features
-            gnx_name_path = gnx_name.replace(':', '_')
-            gnx_name_path = gnx_name_path.replace('/', '_')
-            gnx_path = os.path.join(database_pkl_dir, gnx_name_path)
-            if gnx_name_path not in os.listdir(database_pkl_dir):
-                os.mkdir(gnx_path)
+            gnx_path = os.path.join(database_pkl_dir, re.sub('[^a-zA-Z0-9]', '_', gnx_name))
+            if self._params['general']["dump_pkl"]:
+                os.makedirs(gnx_path, exist_ok=True)
 
-            gnx_ftr = GraphFeatures(gnx, self._params.features, dir_path=gnx_path, logger=self._logger,
-                                    is_max_connected=self._params.max_connected)
-            gnx_ftr.build(should_dump=True, force_build=self._params.FORCE_REBUILD_FEATURES)  # build features
+            gnx_ftr = GraphFeatures(gnx, ANOMALY_DETECTION_FEATURES, dir_path=gnx_path, logger=self._logger,
+                                    is_max_connected=self._params['features']['max_connected'])
+            gnx_ftr.build(should_dump=self._params['general']["dump_pkl"],
+                          force_build=self._params['general']['FORCE_REBUILD_FEATURES'])  # build features
             # calc motif ratio vector
-            gnx_to_vec[gnx_name] = FeaturesProcessor(gnx_ftr).as_matrix(norm_func=log_norm) if self._params.log else \
-                FeaturesProcessor(gnx_ftr).as_matrix()
-
-        pickle.dump(gnx_to_vec, open(mat_pkl_path, "wb"))
+            gnx_to_vec[gnx_name] = FeaturesProcessor(gnx_ftr).as_matrix(norm_func=log_norm if self._params['features']['log'] else None)
+        if self._params['general']['dump_pkl']:
+            os.makedirs(feature_matrix_dir, exist_ok=True)
+            pickle.dump(gnx_to_vec, open(mat_pkl, "wb"))
         return gnx_to_vec
 
-    def _calc_vec(self):
-        database_name = self._params.database.DATABASE_NAME + "_" + \
-                        str(self._params.max_connected) + "_" + str(self._params.directed)
-        vec_pkl_path = os.path.join(self._base_dir, "pkl", "vectors", database_name + "_vectors_log_" +
-                                    str(self._params.log) + ".pkl")
-        if os.path.exists(vec_pkl_path):
-            self._logger.info("loading pkl file - graph_vectors")
-            return pickle.load(open(vec_pkl_path, "rb"))
+    def _get_beta_vec(self, mx_dict, best_pairs):
+        self._logger.debug("calculating beta vectors")
 
-        # create dir for database
-        pkl_dir = os.path.join(self._base_dir, "pkl", "features")
-        database_pkl_dir = os.path.join(pkl_dir, database_name)
-        if database_name not in os.listdir(pkl_dir):
-            os.mkdir(database_pkl_dir)
+        if self._params['beta_vectors']['type'] == "regression":
+            beta = LinearContext(self._temporal_graph, mx_dict, best_pairs,
+                                 window_size=self._params['beta_vectors']['window_size'])
+        elif self._params['beta_vectors']['type'] == "mean_regression":
+            beta = LinearMeanContext(self._temporal_graph, mx_dict, best_pairs,
+                                     window_size=self._params['beta_vectors']['window_size'])
+        else:
+            raise RuntimeError(f"invalid value for params[beta_vectors][type], got {self._params['beta_vectors']['type']}"
+                               f" while valid options are: regression/mean_regression ")
+        if self._params['general']['dump_pkl']:
+            beta_pkl_dir = os.path.join(self._params['general']['pkl_path'], "beta_matrix")
+            tg_pkl_path = os.path.join(beta_pkl_dir, f"{self.data_name()}_beta.pkl")
+            os.makedirs(beta_pkl_dir, exist_ok=True)
+            pickle.dump(beta.beta_matrix(), open(tg_pkl_path, "wb"))
+        self._logger.debug("finish calculating beta vectors")
 
-        gnx_to_vec = {}
-        for gnx_name, gnx in zip(self._temporal_graph.graph_names(), self._temporal_graph.graphs()):
-            # create dir for specific graph features
-            gnx_path = os.path.join(database_pkl_dir, gnx_name)
-            if gnx_name not in os.listdir(database_pkl_dir):
-                os.mkdir(gnx_path)
+        return beta
 
-            gnx_ftr = GraphFeatures(gnx, self._params.features, dir_path=gnx_path, logger=self._logger,
-                                    is_max_connected=self._params.max_connected)
-            gnx_ftr.build(should_dump=True, force_build=self._params.FORCE_REBUILD_FEATURES)  # build features
-            # calc motif ratio vector
-            gnx_to_vec[gnx_name] = FeaturesProcessor(gnx_ftr).activate_motif_ratio_vec(norm_func=log_norm)\
-                if self._params.log else FeaturesProcessor(gnx_ftr).activate_motif_ratio_vec()
+    def _get_graphs_score(self, beta_matrix):
+        score_type = self._params['score']['type']
+        if score_type == "knn":
+            return KnnScore(beta_matrix, self._params['score']['params']['knn']['k'], self.data_name(),
+                            window_size=self._params['score']['window_size'])
+        elif score_type == "gmm":
+            return GmmScore(beta_matrix, self.data_name(), window_size=self._params['score']['window_size'],
+                            n_components=self._params['score']['params']['gmm']['n_components'])
+        elif score_type == "local_outlier":
+            return LocalOutlierFactorScore(beta_matrix, self.data_name(), window_size=self._params['score']['window_size'],
+                                           n_neighbors=self._params['score']['params']['local_outlier']['n_neighbors'])
+        else:
+            raise RuntimeError(f"invalid value for params[beta_vectors][type], got {score_type}"
+                               f" while valid options are: knn/gmm/local_outlier")
 
-        pickle.dump(gnx_to_vec, open(vec_pkl_path, "wb"))
-        return gnx_to_vec
-
-    def _build_first_method(self):
-        mx_dict = self._calc_matrix()
+    def _run_ad(self):
+        mx_dict = self._calc_tg_feature_matrix()
         concat_mx = np.vstack([mx for name, mx in mx_dict.items()])
-        pearson_picker = PearsonFeaturePicker(concat_mx, size=self._params.ftr_pairs,
-                                              logger=self._logger, identical_bar=self._params.identical_bar)
+        pearson_picker = PearsonFeaturePicker(concat_mx, size=self._params['feature_pair_picker']['num_pairs'],
+                                              logger=self._logger, identical_bar=self._params['feature_pair_picker']['overlap_bar'])
         best_pairs = pearson_picker.best_pairs()
-        beta = LinearContext(self._temporal_graph, mx_dict, best_pairs, window_size=self._params.window_correlation)
-        beta_matrix = beta.beta_matrix()
-        if self._params.score_type == "knn":
-            score = KnnScore(beta_matrix, self._params.KNN_k, self._data_name,
-                             window_size=self._params.window_score)
-        elif self._params.score_type == "gmm":
-            score = GmmScore(beta_matrix, self._data_name, window_size=self._params.window_score,
-                             n_components=self._params.n_components)
-        else:   # self._params["score_type"] == "local_outlier":
-            score = LocalOutlierFactorScore(beta_matrix, self._data_name, window_size=self._params.window_score,
-                                            n_neighbors=self._params.n_neighbors)
-        anomaly_picker = SimpleAnomalyPicker(self._temporal_graph, score.score_list(), self._data_name,
-                                             num_anomalies=self._params.n_outliers)
+        beta_matrix = self._get_beta_vec(mx_dict, best_pairs).beta_matrix()
+        scores = self._get_graphs_score(beta_matrix).score_list()
+
+        anomaly_picker = SimpleAnomalyPicker(self._temporal_graph, scores, self.data_name(),
+                                             num_anomalies=self._num_anomalies)
         anomaly_picker.build()
-        anomaly_picker.plot_anomalies_bokeh(self._params.anomalies_file_name, truth=self._ground_truth,
-                                            info_text=self._params.tostring())
-
-    def _build_second_method(self):
-        self._graph_to_vec = self._calc_vec()
-        self._graph_matrix = np.vstack([self._graph_to_vec[name] for name in self._temporal_graph.graph_names()])
-        if self._params.log:
-            self._graph_matrix = log_norm(self._graph_matrix)
-
-        if self._params.score_type == "knn":
-            score = KnnScore(self._graph_matrix, self._params.KNN_k, self._data_name,
-                             window_size=self._params.window_score)
-        elif self._params.score_type == "gmm":
-            score = GmmScore(self._graph_matrix, self._data_name, window_size=self._params.window_score,
-                             n_components=self._params.n_components)
-        else:   # self._params["score_type"] == "local_outlier":
-            score = LocalOutlierFactorScore(self._graph_matrix, self._data_name,
-                                            window_size=self._params.window_score,
-                                            n_neighbors=self._params.n_neighbors)
-
-        anomaly_picker = SimpleAnomalyPicker(self._temporal_graph, score.score_list(), self._data_name,
-                                             num_anomalies=self._params.n_outliers)
-        anomaly_picker.build()
-        anomaly_picker.plot_anomalies_bokeh(self._params.anomalies_file_name, truth=self._ground_truth,
-                                            info_text=self._params.tostring())
-
-    def _build_third_method(self):
-        mx_dict = self._calc_matrix()
-        concat_mx = np.vstack([mx for name, mx in mx_dict.items()])
-        pearson_picker = PearsonFeaturePicker(concat_mx, size=self._params.ftr_pairs,
-                                              logger=self._logger, identical_bar=self._params.identical_bar)
-        best_pairs = pearson_picker.best_pairs()
-        beta = LinearMeanContext(self._temporal_graph, mx_dict, best_pairs, window_size=self._params.window_correlation)
-        beta_matrix = beta.beta_matrix()
-        if self._params.score_type == "knn":
-            score = KnnScore(beta_matrix, self._params.KNN_k, self._data_name,
-                             window_size=self._params.window_score)
-        elif self._params.score_type == "gmm":
-            score = GmmScore(beta_matrix, self._data_name, window_size=self._params.window_score,
-                             n_components=self._params.n_components)
-        else:   # self._params["score_type"] == "local_outlier":
-            score = LocalOutlierFactorScore(beta_matrix, self._data_name, window_size=self._params.window_score,
-                                            n_neighbors=self._params.n_neighbors)
-        anomaly_picker = SimpleAnomalyPicker(self._temporal_graph, score.score_list(), self._data_name,
-                                             num_anomalies=self._params.n_outliers)
-        anomaly_picker.build()
-        anomaly_picker.plot_anomalies_bokeh(self._params.anomalies_file_name, truth=self._ground_truth,
-                                            info_text=self._params.tostring())
+        anomaly_picker.plot_anomalies_bokeh("", truth=self._ground_truth,
+                                            info_text=str(self._params))
 
 
 if __name__ == "__main__":
-    from parameters import DEFAULT_PARAMS
-    AnomalyDetection(DEFAULT_PARAMS)
-    # A = AnomalyDetection()
-    # A.build_manipulations()
+    TPGAD("params/enron_param.json")
+
 

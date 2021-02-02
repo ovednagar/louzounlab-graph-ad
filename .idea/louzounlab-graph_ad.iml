@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="PYTHON_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-ad" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_algorithms" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_algorithms/edges" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_algorithms/motif_variations" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_algorithms/vertices" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_infra" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_meta" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures/graph_infra" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graphs-package" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graphs-package/features_processor" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graphs-package/multi_graph" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graphs-package/temporal_graphs" isTestSource="false" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+  <component name="PyDocumentationSettings">
+    <option name="format" value="PLAIN" />
+    <option name="myDocStringFormat" value="Plain" />
+  </component>
+  <component name="TestRunnerService">
+    <option name="PROJECT_TEST_RUNNER" value="pytest" />
+  </component>
+</module>

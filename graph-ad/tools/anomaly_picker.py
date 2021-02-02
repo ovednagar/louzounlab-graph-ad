@@ -5,12 +5,9 @@ from time import strftime, gmtime
 import numpy as np
 import os
 import sklearn
-
-from bokeh.io import export_png
 from bokeh.models import Label, LegendItem, Legend
 from loggers import PrintLogger, BaseLogger
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 from os import path
 from bokeh.plotting import figure, show, save
 from bokeh.palettes import Greens, Reds
@@ -99,7 +96,7 @@ class SimpleAnomalyPicker(AnomalyPicker):
             plt.close()
 
     def plot_anomalies_bokeh(self, file_name="context_anomalies", truth=None, info_text=None):
-        plt_path = path.join("gif", self._database_name.strip("."), file_name + "_" + strftime("%d:%m:%y_%H:%M:%S", gmtime()) + ".jpg")
+        plt_path = path.join("gif", self._database_name.strip("."), f"{file_name}_{strftime('%d%m%y_%H%M%S', gmtime()) }.jpg")
         if "gif" not in os.listdir("."):
             os.mkdir("gif")
         if self._database_name.strip(".") not in os.listdir(path.join("gif")):

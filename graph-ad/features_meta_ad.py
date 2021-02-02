@@ -35,7 +35,7 @@ ANOMALY_DETECTION_FEATURES = {
     "motif3": FeatureMeta(nth_nodes_motif(3), {"m3"}),
     # "multi_dimensional_scaling": FeatureMeta(MultiDimensionalScalingCalculator, {"mds"}),
     # "page_rank": FeatureMeta(PageRankCalculator, {"pr"}),
-    "motif4": FeatureMeta(nth_nodes_motif(4), {"m4"}),
+    # "motif4": FeatureMeta(nth_nodes_motif(4), {"m4"}),
     # "first_neighbor_histogram": FeatureMeta(nth_neighbor_calculator(1), {"fnh", "first_neighbor"}),
     # "second_neighbor_histogram": FeatureMeta(nth_neighbor_calculator(2), {"snh", "second_neighbor"}),
 }

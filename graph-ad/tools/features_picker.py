@@ -1,8 +1,9 @@
 import scipy.stats
+from tqdm import tqdm
+
 from loggers import BaseLogger, PrintLogger
 import collections
 import numpy as np
-from temporal_graph import TemporalGraph
 
 
 class FeaturesPicker:
@@ -28,7 +29,7 @@ class FeaturesPicker:
     def _fill_features_identicality(self):
         self._logger.debug("start features identicality")
         rows, cols = self._features_matrix.shape
-        for i in range(cols):
+        for i in tqdm(range(cols)):
             self._features_identicality.append(collections.Counter(
                 self._features_matrix[:, i].T.tolist()[0]).most_common(1)[0][1] / rows)
         self._logger.debug("end_features identicality")
@@ -49,14 +50,17 @@ class PearsonFeaturePicker(FeaturesPicker):
         best = []
         row, col = self._features_matrix.shape
         # runs over all pairs of features and check their quality parameter
-        for i in range(col):
-            for j in range(i, col):
-                # obviously pair of features can't be a feature with itself..
-                if i == j or not self._is_feature_relevant(i) or not self._is_feature_relevant(j):
-                    continue
-                # returns the quality parameter (r) and how much can we rely on the result (p), for a specific pair (i,j)
-                r, p_value = scipy.stats.pearsonr(np.array(self._features_matrix[:, i]).T[0], np.array(self._features_matrix[:, j]).T[0])
-                rho.append([abs(r), i, j])
+        with tqdm(total=col*(col-1)//2) as t:
+            for i in range(col):
+                for j in range(i+1, col):
+                    # obviously pair of features can't be a feature with itself..
+                    t.update(1)
+                    if not self._is_feature_relevant(i) or not self._is_feature_relevant(j):
+                        continue
+                    # returns the quality parameter (r) and how much can we rely on the result (p), for a specific pair (i,j)
+                    r, p_value = scipy.stats.pearsonr(np.array(self._features_matrix[:, i]).T[0], np.array(self._features_matrix[:, j]).T[0])
+                    rho.append([abs(r), i, j])
+
         self._logger.debug("end_pick_process")
 
         # higher the quality parameter the better the regression
