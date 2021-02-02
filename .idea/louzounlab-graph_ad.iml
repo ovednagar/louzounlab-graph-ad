@@ -8,6 +8,7 @@
       <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_algorithms" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_algorithms/edges" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_algorithms/motif_variations" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_algorithms/vertices" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_infra" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/graph-measures/features_meta" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/graph-measures/graph_infra" isTestSource="false" />
